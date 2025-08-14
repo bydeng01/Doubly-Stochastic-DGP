@@ -1,8 +1,6 @@
 # Doubly-Stochastic-DGP
 Deep Gaussian Processes with Doubly Stochastic Variational Inference 
 
-Requirements: gpflow1.1.1 and tensorflow1.8. NB not compatabile with more recent versions (e.g. gpflow1.2)
-
 This code accompanies the paper
 
 @inproceedings{salimbeni2017doubly,
@@ -22,3 +20,5 @@ This code now offers additional functionality than in the above paper. In partic
   booktitle={Artificial Intelligence and Statistics},
   year={2018}
 }
+
+**Disclaimer:** This is a fork of the original codebase, updated to work with GPflow 2.x and TensorFlow 2 by [Boyuan Deng](https://bydeng01.github.io/).
