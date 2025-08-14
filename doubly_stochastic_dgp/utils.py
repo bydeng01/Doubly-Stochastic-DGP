@@ -1,3 +1,5 @@
+# Copyright 2025 Boyuan Deng
+#
 # Copyright 2017 Hugh Salimbeni
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,8 +16,8 @@
 
 import tensorflow as tf
 
-from gpflow import settings
-from gpflow import params_as_tensors, Parameterized
+from gpflow.config import default_float, default_jitter
+from gpflow.base import Module
 from gpflow.likelihoods import Gaussian
 
 
@@ -38,20 +40,20 @@ def reparameterize(mean, var, z, full_cov=False):
         return mean
 
     if full_cov is False:
-        return mean + z * (var + settings.jitter) ** 0.5
+        return mean + z * (var + default_jitter()) ** 0.5
 
     else:
         S, N, D = tf.shape(mean)[0], tf.shape(mean)[1], tf.shape(mean)[2] # var is SNND
         mean = tf.transpose(mean, (0, 2, 1))  # SND -> SDN
         var = tf.transpose(var, (0, 3, 1, 2))  # SNND -> SDNN
-        I = settings.jitter * tf.eye(N, dtype=settings.float_type)[None, None, :, :] # 11NN
-        chol = tf.cholesky(var + I)  # SDNN
+        I = tf.cast(default_jitter(), default_float()) * tf.eye(N, dtype=default_float())[None, None, :, :] # 11NN
+        chol = tf.linalg.cholesky(var + I)  # SDNN
         z_SDN1 = tf.transpose(z, [0, 2, 1])[:, :, :, None]  # SND->SDN1
         f = mean + tf.matmul(chol, z_SDN1)[:, :, :, 0]  # SDN(1)
         return tf.transpose(f, (0, 2, 1)) # SND
 
 
-class BroadcastingLikelihood(Parameterized):
+class BroadcastingLikelihood(Module):
     """
     A wrapper for the likelihood to broadcast over the samples dimension. The Gaussian doesn't
     need this, but for the others we can apply reshaping and tiling.
@@ -60,7 +62,7 @@ class BroadcastingLikelihood(Parameterized):
     but with Y still of shape N,D
     """
     def __init__(self, likelihood):
-        Parameterized.__init__(self)
+        super().__init__()
         self.likelihood = likelihood
 
         if isinstance(likelihood, Gaussian):
@@ -85,37 +87,33 @@ class BroadcastingLikelihood(Parameterized):
             else:
                 return tf.reshape(flattened_result, [S, N, -1])
 
-    @params_as_tensors
     def variational_expectations(self, Fmu, Fvar, Y):
         f = lambda vars_SND, vars_ND: self.likelihood.variational_expectations(vars_SND[0],
                                                                                 vars_SND[1],
                                                                                 vars_ND[0])
         return self._broadcast(f,[Fmu, Fvar], [Y])
 
-    @params_as_tensors
     def logp(self, F, Y):
-        f = lambda vars_SND, vars_ND: self.likelihood.logp(vars_SND[0], vars_ND[0])
+        f = lambda vars_SND, vars_ND: self.likelihood.log_prob(vars_SND[0], vars_ND[0])
         return self._broadcast(f, [F], [Y])
 
-    @params_as_tensors
     def conditional_mean(self, F):
          f = lambda vars_SND, vars_ND: self.likelihood.conditional_mean(vars_SND[0])
          return self._broadcast(f,[F], [])
 
-    @params_as_tensors
     def conditional_variance(self, F):
          f = lambda vars_SND, vars_ND: self.likelihood.conditional_variance(vars_SND[0])
          return self._broadcast(f,[F], [])
 
-    @params_as_tensors
     def predict_mean_and_var(self, Fmu, Fvar):
          f = lambda vars_SND, vars_ND: self.likelihood.predict_mean_and_var(vars_SND[0],
                                                                              vars_SND[1])
          return self._broadcast(f,[Fmu, Fvar], [])
 
-    @params_as_tensors
     def predict_density(self, Fmu, Fvar, Y):
-        f = lambda vars_SND, vars_ND: self.likelihood.predict_density(vars_SND[0],
-                                                                       vars_SND[1],
-                                                                       vars_ND[0])
+        f = lambda vars_SND, vars_ND: tf.exp(self.likelihood.predict_log_density(
+            vars_SND[0],
+            vars_SND[1],
+            vars_ND[0]
+        ))
         return self._broadcast(f,[Fmu, Fvar], [Y])
