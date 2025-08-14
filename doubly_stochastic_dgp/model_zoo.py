@@ -1,3 +1,5 @@
+# Copyright 2025 Boyuan Deng
+#
 # Copyright 2017 Hugh Salimbeni
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,16 +16,15 @@
 
 import tensorflow as tf
 
-from gpflow import params_as_tensors
 from gpflow.likelihoods import Gaussian
-from gpflow import settings
+from gpflow import default_float
+from gpflow.config import default_jitter
 
 from doubly_stochastic_dgp.dgp import DGP_Base
 from doubly_stochastic_dgp.layers import GPR_Layer, GPMC_Layer
 
 
 class DGP_Collapsed(DGP_Base):
-    @params_as_tensors
     def inner_layers_propagate(self, X, full_cov=False, S=1, zs=None):
         sX = tf.tile(tf.expand_dims(X, 0), [S, 1, 1])
 
@@ -43,17 +44,15 @@ class DGP_Collapsed(DGP_Base):
 
         return Fs, Fmeans, Fvars
 
-    @params_as_tensors
     def propagate(self, X, full_cov=False, S=1, zs=None):
         _, ms, vs = self.inner_layers_propagate(self.X, full_cov=full_cov, zs=zs)
         self.layers[-1].set_data(ms[-1][0], vs[-1][0], self.Y, self.likelihood.likelihood.variance)
         return DGP_Base.propagate(self, X, full_cov=full_cov, S=S, zs=zs)
 
-    @params_as_tensors
-    def _build_likelihood(self):
+    def maximum_log_likelihood_objective(self):
         _, ms, vs = self.inner_layers_propagate(self.X, full_cov=False)
         self.layers[-1].set_data(ms[-1][0], vs[-1][0], self.Y, self.likelihood.likelihood.variance)
-        KL = tf.cast(tf.reduce_sum([layer.KL() for layer in self.layers[:-1]]), dtype=settings.float_type)
+        KL = tf.cast(tf.reduce_sum([layer.KL() for layer in self.layers[:-1]]), dtype=default_float())
         return self.layers[-1].build_likelihood() - KL
 
 
@@ -82,7 +81,6 @@ class DGP_Heinonen(DGP_Collapsed):
             assert kwargs['minibatch_size'] is None
         DGP_Collapsed.__init__(self, X, Y, likelihood, layers, **kwargs)
 
-    @params_as_tensors
     def inner_layers_propagate(self, X, full_cov=False, S=1, zs=None):
         f = self.layers[0].build_latents()[None, :, :]
         return [f], [f], [tf.zeros_like(f)]
