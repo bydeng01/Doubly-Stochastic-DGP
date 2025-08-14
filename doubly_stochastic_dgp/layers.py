@@ -1,3 +1,5 @@
+# Copyright 2025 Boyuan Deng
+#
 # Copyright 2017 Hugh Salimbeni
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,39 +17,38 @@
 import tensorflow as tf
 import numpy as np
 
-from gpflow.params import Parameter, Parameterized
+from gpflow.base import Module, Parameter
 from gpflow.conditionals import conditional
-from gpflow.features import InducingPoints
+from gpflow.inducing_variables import InducingPoints
 from gpflow.kullback_leiblers import gauss_kl
 from gpflow.priors import Gaussian as Gaussian_prior
-from gpflow import transforms
-from gpflow import settings
-from gpflow.models.gplvm import BayesianGPLVM
+from gpflow import default_float
+from gpflow.config import default_jitter
 from gpflow.expectations import expectation
 from gpflow.probability_distributions import DiagonalGaussian
-from gpflow import params_as_tensors
 from gpflow.logdensities import multivariate_normal
+from gpflow.utilities import triangular
 
 
 
 from doubly_stochastic_dgp.utils import reparameterize
 
 
-class Layer(Parameterized):
+class Layer(Module):
     def __init__(self, input_prop_dim=None, **kwargs):
         """
         A base class for GP layers. Basic functionality for multisample conditional, and input propagation
         :param input_prop_dim: the first dimensions of X to propagate. If None (or zero) then no input prop
         :param kwargs:
         """
-        Parameterized.__init__(self, **kwargs)
+        Module.__init__(self, **kwargs)
         self.input_prop_dim = input_prop_dim
 
     def conditional_ND(self, X, full_cov=False):
         raise NotImplementedError
 
     def KL(self):
-        return tf.cast(0., dtype=settings.float_type)
+        return tf.cast(0., dtype=default_float())
 
     def conditional_SND(self, X, full_cov=False):
         """
@@ -65,8 +66,14 @@ class Layer(Parameterized):
         """
         if full_cov is True:
             f = lambda a: self.conditional_ND(a, full_cov=full_cov)
-            mean, var = tf.map_fn(f, X, dtype=(tf.float64, tf.float64))
-            return tf.stack(mean), tf.stack(var)
+            mean, var = tf.map_fn(
+                f, X, 
+                fn_output_signature=(
+                    tf.TensorSpec(shape=None, dtype=default_float()),
+                    tf.TensorSpec(shape=None, dtype=default_float()),
+                ),
+            )
+            return mean, var
         else:
             S, N, D = tf.shape(X)[0], tf.shape(X)[1], tf.shape(X)[2]
             X_flat = tf.reshape(X, [S * N, D])
@@ -99,7 +106,7 @@ class Layer(Parameterized):
             var = tf.reshape(var, (S, N, D))
 
         if z is None:
-            z = tf.random_normal(tf.shape(mean), dtype=settings.float_type)
+            z = tf.random.normal(tf.shape(mean), dtype=default_float())
         samples = reparameterize(mean, var, z, full_cov=full_cov)
 
         if self.input_prop_dim:
@@ -111,7 +118,7 @@ class Layer(Parameterized):
 
             if full_cov:
                 shape = (tf.shape(X)[0], tf.shape(X)[1], tf.shape(X)[1], tf.shape(var)[3])
-                zeros = tf.zeros(shape, dtype=settings.float_type)
+                zeros = tf.zeros(shape, dtype=default_float())
                 var = tf.concat([zeros, var], 3)
             else:
                 var = tf.concat([tf.zeros_like(X_prop), var], 2)
@@ -147,8 +154,7 @@ class SVGP_Layer(Layer):
         self.q_mu = Parameter(q_mu)
 
         q_sqrt = np.tile(np.eye(self.num_inducing)[None, :, :], [num_outputs, 1, 1])
-        transform = transforms.LowerTriangular(self.num_inducing, num_matrices=num_outputs)
-        self.q_sqrt = Parameter(q_sqrt, transform=transform)
+        self.q_sqrt = Parameter(q_sqrt, transform=triangular())
 
         self.feature = InducingPoints(Z)
         self.kern = kern
@@ -158,18 +164,17 @@ class SVGP_Layer(Layer):
         self.white = white
 
         if not self.white:  # initialize to prior
-            Ku = self.kern.compute_K_symm(Z)
-            Lu = np.linalg.cholesky(Ku + np.eye(Z.shape[0])*settings.jitter)
-            self.q_sqrt = np.tile(Lu[None, :, :], [num_outputs, 1, 1])
+            Ku = self.kern.K(Z)
+            Lu = np.linalg.cholesky(Ku + np.eye(Z.shape[0])*default_jitter())
+            self.q_sqrt.assign(np.tile(Lu[None, :, :], [num_outputs, 1, 1]))
 
         self.needs_build_cholesky = True
 
-    @params_as_tensors
     def build_cholesky_if_needed(self):
         # make sure we only compute this once
         if self.needs_build_cholesky:
-            self.Ku = self.feature.Kuu(self.kern, jitter=settings.jitter)
-            self.Lu = tf.cholesky(self.Ku)
+            self.Ku = self.feature.Kuu(self.kern, jitter=default_jitter())
+            self.Lu = tf.linalg.cholesky(self.Ku)
             self.Ku_tiled = tf.tile(self.Ku[None, :, :], [self.num_outputs, 1, 1])
             self.Lu_tiled = tf.tile(self.Lu[None, :, :], [self.num_outputs, 1, 1])
             self.needs_build_cholesky = False
@@ -183,14 +188,14 @@ class SVGP_Layer(Layer):
         #             full_cov=full_cov, white=self.white)
         Kuf = self.feature.Kuf(self.kern, X)
 
-        A = tf.matrix_triangular_solve(self.Lu, Kuf, lower=True)
+        A = tf.linalg.triangular_solve(self.Lu, Kuf, lower=True)
         if not self.white:
-            A = tf.matrix_triangular_solve(tf.transpose(self.Lu), A, lower=False)
+            A = tf.linalg.triangular_solve(tf.transpose(self.Lu), A, lower=False)
 
         mean = tf.matmul(A, self.q_mu, transpose_a=True)
 
         A_tiled = tf.tile(A[None, :, :], [self.num_outputs, 1, 1])
-        I = tf.eye(self.num_inducing, dtype=settings.float_type)[None, :, :]
+        I = tf.eye(self.num_inducing, dtype=default_float())[None, :, :]
 
         if self.white:
             SK = -I
@@ -232,12 +237,12 @@ class SVGP_Layer(Layer):
         self.build_cholesky_if_needed()
 
         KL = -0.5 * self.num_outputs * self.num_inducing
-        KL -= 0.5 * tf.reduce_sum(tf.log(tf.matrix_diag_part(self.q_sqrt) ** 2))
+        KL -= 0.5 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(self.q_sqrt) ** 2))
 
         if not self.white:
-            KL += tf.reduce_sum(tf.log(tf.matrix_diag_part(self.Lu))) * self.num_outputs
-            KL += 0.5 * tf.reduce_sum(tf.square(tf.matrix_triangular_solve(self.Lu_tiled, self.q_sqrt, lower=True)))
-            Kinv_m = tf.cholesky_solve(self.Lu, self.q_mu)
+            KL += tf.reduce_sum(tf.math.log(tf.linalg.diag_part(self.Lu))) * self.num_outputs
+            KL += 0.5 * tf.reduce_sum(tf.square(tf.linalg.triangular_solve(self.Lu_tiled, self.q_sqrt, lower=True)))
+            Kinv_m = tf.linalg.cholesky_solve(self.Lu, self.q_mu)
             KL += 0.5 * tf.reduce_sum(self.q_mu * Kinv_m)
         else:
             KL += 0.5 * tf.reduce_sum(tf.square(self.q_sqrt))
@@ -257,7 +262,7 @@ class SGPMC_Layer(SVGP_Layer):
         self.q_sqrt = None
 
     def KL(self):
-        return tf.cast(0., dtype=settings.float_type)
+        return tf.cast(0., dtype=default_float())
 
 
 class GPMC_Layer(Layer):
@@ -275,7 +280,7 @@ class GPMC_Layer(Layer):
 
         self.num_outputs = num_outputs
 
-        Ku = self.kern.compute_K_symm(X) + np.eye(self.num_data) * settings.jitter
+        Ku = self.kern.K(X) + np.eye(self.num_data) * default_jitter()
         self.Lu = tf.constant(np.linalg.cholesky(Ku))
         self.X = tf.constant(X)
 
@@ -320,10 +325,10 @@ class GPR_Layer(Collapsed_Layer):
     def conditional_ND(self, Xnew, full_cov=False):
         ## modified from GPR
         Kx = self.kern.K(self._X_mean, Xnew)
-        K = self.kern.K(self._X_mean) + tf.eye(tf.shape(self._X_mean)[0], dtype=settings.float_type) * self._lik_variance
-        L = tf.cholesky(K)
-        A = tf.matrix_triangular_solve(L, Kx, lower=True)
-        V = tf.matrix_triangular_solve(L, self._Y - self.mean_function(self._X_mean))
+        K = self.kern.K(self._X_mean) + tf.eye(tf.shape(self._X_mean)[0], dtype=default_float()) * self._lik_variance
+        L = tf.linalg.cholesky(K)
+        A = tf.linalg.triangular_solve(L, Kx, lower=True)
+        V = tf.linalg.triangular_solve(L, self._Y - self.mean_function(self._X_mean), lower=True)
         fmean = tf.matmul(A, V, transpose_a=True) + self.mean_function(Xnew)
         if full_cov:
             fvar = self.kern.K(Xnew) - tf.matmul(A, A, transpose_a=True)
@@ -336,8 +341,8 @@ class GPR_Layer(Collapsed_Layer):
 
     def build_likelihood(self):
         ## modified from GPR
-        K = self.kern.K(self._X_mean) + tf.eye(tf.shape(self._X_mean)[0], dtype=settings.float_type) * self._lik_variance
-        L = tf.cholesky(K)
+        K = self.kern.K(self._X_mean) + tf.eye(tf.shape(self._X_mean)[0], dtype=default_float()) * self._lik_variance
+        L = tf.linalg.cholesky(K)
         m = self.mean_function(self._X_mean)
         return tf.reduce_sum(multivariate_normal(self._Y, m, L))
 
@@ -372,39 +377,39 @@ def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
     if X_var is None:
         # SGPR
         num_inducing = len(self.feature)
-        num_data = tf.cast(tf.shape(Y)[0], settings.float_type)
-        output_dim = tf.cast(tf.shape(Y)[1], settings.float_type)
+        num_data = tf.cast(tf.shape(Y)[0], default_float())
+        output_dim = tf.cast(tf.shape(Y)[1], default_float())
 
         err = Y - self.mean_function(X_mean)
         Kdiag = self.kern.Kdiag(X_mean)
         Kuf = self.feature.Kuf(self.kern, X_mean)
-        Kuu = self.feature.Kuu(self.kern, jitter=settings.numerics.jitter_level)
-        L = tf.cholesky(Kuu)
+        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
+        L = tf.linalg.cholesky(Kuu)
         sigma = tf.sqrt(variance)
 
         # Compute intermediate matrices
-        A = tf.matrix_triangular_solve(L, Kuf, lower=True) / sigma
+        A = tf.linalg.triangular_solve(L, Kuf, lower=True) / sigma
         AAT = tf.matmul(A, A, transpose_b=True)
-        B = AAT + tf.eye(num_inducing, dtype=settings.float_type)
-        LB = tf.cholesky(B)
+        B = AAT + tf.eye(num_inducing, dtype=default_float())
+        LB = tf.linalg.cholesky(B)
         Aerr = tf.matmul(A, err)
-        c = tf.matrix_triangular_solve(LB, Aerr, lower=True) / sigma
+        c = tf.linalg.triangular_solve(LB, Aerr, lower=True) / sigma
 
         # compute log marginal bound
         bound = -0.5 * num_data * output_dim * np.log(2 * np.pi)
-        bound += tf.negative(output_dim) * tf.reduce_sum(tf.log(tf.matrix_diag_part(LB)))
-        bound -= 0.5 * num_data * output_dim * tf.log(variance)
+        bound += -output_dim * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(LB)))
+        bound -= 0.5 * num_data * output_dim * tf.math.log(variance)
         bound += -0.5 * tf.reduce_sum(tf.square(err)) / variance
         bound += 0.5 * tf.reduce_sum(tf.square(c))
         bound += -0.5 * output_dim * tf.reduce_sum(Kdiag) / variance
-        bound += 0.5 * output_dim * tf.reduce_sum(tf.matrix_diag_part(AAT))
+        bound += 0.5 * output_dim * tf.reduce_sum(tf.linalg.diag_part(AAT))
 
         return bound
 
 
     else:
 
-        X_cov = tf.matrix_diag(X_var)
+        X_cov = tf.linalg.diag(X_var)
         pX = DiagonalGaussian(X_mean, X_var)
         num_inducing = len(self.feature)
         if hasattr(self.kern, 'X_input_dim'):
@@ -415,37 +420,37 @@ def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
             psi0 = tf.reduce_sum(expectation(pX, self.kern))
             psi1 = expectation(pX, (self.kern, self.feature))
             psi2 = tf.reduce_sum(expectation(pX, (self.kern, self.feature), (self.kern, self.feature)), axis=0)
-        Kuu = self.feature.Kuu(self.kern, jitter=settings.numerics.jitter_level)
-        L = tf.cholesky(Kuu)
+        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
+        L = tf.linalg.cholesky(Kuu)
         sigma2 = variance
         sigma = tf.sqrt(sigma2)
 
         # Compute intermediate matrices
-        A = tf.matrix_triangular_solve(L, tf.transpose(psi1), lower=True) / sigma
-        tmp = tf.matrix_triangular_solve(L, psi2, lower=True)
-        AAT = tf.matrix_triangular_solve(L, tf.transpose(tmp), lower=True) / sigma2
-        B = AAT + tf.eye(num_inducing, dtype=settings.float_type)
-        LB = tf.cholesky(B)
-        log_det_B = 2. * tf.reduce_sum(tf.log(tf.matrix_diag_part(LB)))
-        c = tf.matrix_triangular_solve(LB, tf.matmul(A, Y), lower=True) / sigma
+        A = tf.linalg.triangular_solve(L, tf.transpose(psi1), lower=True) / sigma
+        tmp = tf.linalg.triangular_solve(L, psi2, lower=True)
+        AAT = tf.linalg.triangular_solve(L, tf.transpose(tmp), lower=True) / sigma2
+        B = AAT + tf.eye(num_inducing, dtype=default_float())
+        LB = tf.linalg.cholesky(B)
+        log_det_B = 2. * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(LB)))
+        c = tf.linalg.triangular_solve(LB, tf.matmul(A, Y), lower=True) / sigma
 
         # KL[q(x) || p(x)]
         # dX_var = self.X_var if len(self.X_var.get_shape()) == 2 else tf.matrix_diag_part(self.X_var)
         # NQ = tf.cast(tf.size(self.X_mean), settings.float_type)
-        D = tf.cast(tf.shape(Y)[1], settings.float_type)
+        D = tf.cast(tf.shape(Y)[1], default_float())
         # KL = -0.5 * tf.reduce_sum(tf.log(dX_var)) \
         #      + 0.5 * tf.reduce_sum(tf.log(self.X_prior_var)) \
         #      - 0.5 * NQ \
         #      + 0.5 * tf.reduce_sum((tf.square(self.X_mean - self.X_prior_mean) + dX_var) / self.X_prior_var)
 
         # compute log marginal bound
-        ND = tf.cast(tf.size(Y), settings.float_type)
-        bound = -0.5 * ND * tf.log(2 * np.pi * sigma2)
+        ND = tf.cast(tf.size(Y), default_float())
+        bound = -0.5 * ND * tf.math.log(2 * np.pi * sigma2)
         bound += -0.5 * D * log_det_B
         bound += -0.5 * tf.reduce_sum(tf.square(Y)) / sigma2
         bound += 0.5 * tf.reduce_sum(tf.square(c))
         bound += -0.5 * D * (tf.reduce_sum(psi0) / sigma2 -
-                             tf.reduce_sum(tf.matrix_diag_part(AAT)))
+                             tf.reduce_sum(tf.linalg.diag_part(AAT)))
         # bound -= KL # don't need this term
         return bound
 
@@ -456,17 +461,17 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
         num_inducing = len(self.feature)
         err = Y - self.mean_function(X_mean)
         Kuf = self.feature.Kuf(self.kern, X_mean)
-        Kuu = self.feature.Kuu(self.kern, jitter=settings.numerics.jitter_level)
+        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
         Kus = self.feature.Kuf(self.kern, Xnew)
         sigma = tf.sqrt(variance)
-        L = tf.cholesky(Kuu)
-        A = tf.matrix_triangular_solve(L, Kuf, lower=True) / sigma
-        B = tf.matmul(A, A, transpose_b=True) + tf.eye(num_inducing, dtype=settings.float_type)
-        LB = tf.cholesky(B)
+        L = tf.linalg.cholesky(Kuu)
+        A = tf.linalg.triangular_solve(L, Kuf, lower=True) / sigma
+        B = tf.matmul(A, A, transpose_b=True) + tf.eye(num_inducing, dtype=default_float())
+        LB = tf.linalg.cholesky(B)
         Aerr = tf.matmul(A, err)
-        c = tf.matrix_triangular_solve(LB, Aerr, lower=True) / sigma
-        tmp1 = tf.matrix_triangular_solve(L, Kus, lower=True)
-        tmp2 = tf.matrix_triangular_solve(LB, tmp1, lower=True)
+        c = tf.linalg.triangular_solve(LB, Aerr, lower=True) / sigma
+        tmp1 = tf.linalg.triangular_solve(L, Kus, lower=True)
+        tmp2 = tf.linalg.triangular_solve(LB, tmp1, lower=True)
         mean = tf.matmul(tmp2, c, transpose_a=True)
         if full_cov:
             var = self.kern.K(Xnew) + tf.matmul(tmp2, tmp2, transpose_a=True) \
@@ -485,7 +490,7 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
         pX = DiagonalGaussian(X_mean, X_var)
         num_inducing = len(self.feature)
 
-        X_cov = tf.matrix_diag(X_var)
+        X_cov = tf.linalg.diag(X_var)
 
         if hasattr(self.kern, 'X_input_dim'):
             psi1 = self.kern.eKxz(self.feature.Z, X_mean, X_cov)
@@ -497,20 +502,20 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
         # psi1 = expectation(pX, (self.kern, self.feature))
         # psi2 = tf.reduce_sum(expectation(pX, (self.kern, self.feature), (self.kern, self.feature)), axis=0)
 
-        Kuu = self.feature.Kuu(self.kern, jitter=settings.numerics.jitter_level)
+        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
         Kus = self.feature.Kuf(self.kern, Xnew)
         sigma2 = variance
         sigma = tf.sqrt(sigma2)
-        L = tf.cholesky(Kuu)
+        L = tf.linalg.cholesky(Kuu)
 
-        A = tf.matrix_triangular_solve(L, tf.transpose(psi1), lower=True) / sigma
-        tmp = tf.matrix_triangular_solve(L, psi2, lower=True)
-        AAT = tf.matrix_triangular_solve(L, tf.transpose(tmp), lower=True) / sigma2
-        B = AAT + tf.eye(num_inducing, dtype=settings.float_type)
-        LB = tf.cholesky(B)
-        c = tf.matrix_triangular_solve(LB, tf.matmul(A, Y), lower=True) / sigma
-        tmp1 = tf.matrix_triangular_solve(L, Kus, lower=True)
-        tmp2 = tf.matrix_triangular_solve(LB, tmp1, lower=True)
+        A = tf.linalg.triangular_solve(L, tf.transpose(psi1), lower=True) / sigma
+        tmp = tf.linalg.triangular_solve(L, psi2, lower=True)
+        AAT = tf.linalg.triangular_solve(L, tf.transpose(tmp), lower=True) / sigma2
+        B = AAT + tf.eye(num_inducing, dtype=default_float())
+        LB = tf.linalg.cholesky(B)
+        c = tf.linalg.triangular_solve(LB, tf.matmul(A, Y), lower=True) / sigma
+        tmp1 = tf.linalg.triangular_solve(L, Kus, lower=True)
+        tmp2 = tf.linalg.triangular_solve(LB, tmp1, lower=True)
         mean = tf.matmul(tmp2, c, transpose_a=True)
         if full_cov:
             var = self.kern.K(Xnew) + tf.matmul(tmp2, tmp2, transpose_a=True) \
