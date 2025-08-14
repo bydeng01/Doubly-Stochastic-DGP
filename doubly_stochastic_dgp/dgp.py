@@ -1,3 +1,5 @@
+# Copyright 2025 Boyuan Deng
+
 # Copyright 2017 Hugh Salimbeni
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,15 +17,11 @@
 import tensorflow as tf
 import numpy as np
 
-from gpflow.params import DataHolder, Minibatch
-from gpflow import autoflow, params_as_tensors, ParamList
-from gpflow.models.model import Model
-from gpflow.mean_functions import Identity, Linear
-from gpflow.mean_functions import Zero
+from gpflow.base import Module
+from gpflow.mean_functions import Identity, Linear, Zero
 from gpflow.quadrature import mvhermgauss
 from gpflow.likelihoods import Gaussian
-from gpflow import settings
-float_type = settings.float_type
+from gpflow import default_float
 
 from doubly_stochastic_dgp.utils import reparameterize
 
@@ -32,7 +30,7 @@ from doubly_stochastic_dgp.layer_initializations import init_layers_linear
 from doubly_stochastic_dgp.layers import GPR_Layer, SGPMC_Layer, GPMC_Layer, SVGP_Layer
 
 
-class DGP_Base(Model):
+class DGP_Base(Module):
     """
     The base class for Deep Gaussian process models.
 
@@ -43,22 +41,29 @@ class DGP_Base(Model):
                  minibatch_size=None,
                  num_samples=1, num_data=None,
                  **kwargs):
-        Model.__init__(self, **kwargs)
+        Module.__init__(self, **kwargs)
         self.num_samples = num_samples
-
         self.num_data = num_data or X.shape[0]
-        if minibatch_size:
-            self.X = Minibatch(X, minibatch_size, seed=0)
-            self.Y = Minibatch(Y, minibatch_size, seed=0)
+
+        # --- CHANGE 1: minibatching setup ---
+        X_full = tf.convert_to_tensor(X, dtype=default_float())
+        Y_full = tf.convert_to_tensor(Y, dtype=default_float())
+        self.X = X_full     # keep full dataset tensors for prediction etc.
+        self.Y = Y_full
+
+        if minibatch_size is not None:
+            ds = tf.data.Dataset.from_tensor_slices((X_full, Y_full))
+            # buffer_size = dataset size; seeded shuffle like original Minibatch(...)
+            ds = ds.shuffle(buffer_size=tf.shape(X_full)[0], seed=0, reshuffle_each_iteration=True)
+            ds = ds.repeat().batch(minibatch_size, drop_remainder=False)
+            self._mb_iter = iter(ds)
         else:
-            self.X = DataHolder(X)
-            self.Y = DataHolder(Y)
+            self._mb_iter = None
+        # --- END CHANGE 1 ---
 
         self.likelihood = BroadcastingLikelihood(likelihood)
+        self.layers = layers
 
-        self.layers = ParamList(layers)
-
-    @params_as_tensors
     def propagate(self, X, full_cov=False, S=1, zs=None):
         sX = tf.tile(tf.expand_dims(X, 0), [S, 1, 1])
 
@@ -75,7 +80,6 @@ class DGP_Base(Model):
 
         return Fs, Fmeans, Fvars
 
-    @params_as_tensors
     def _build_predict(self, X, full_cov=False, S=1):
         Fs, Fmeans, Fvars = self.propagate(X, full_cov=full_cov, S=S)
         return Fmeans[-1], Fvars[-1]
@@ -89,41 +93,41 @@ class DGP_Base(Model):
         var_exp = self.likelihood.variational_expectations(Fmean, Fvar, Y)  # S, N, D
         return tf.reduce_mean(var_exp, 0)  # N, D
 
-    @params_as_tensors
-    def _build_likelihood(self):
-        L = tf.reduce_sum(self.E_log_p_Y(self.X, self.Y))
+    # helper to fetch current batch
+    def _get_batch(self):
+        if self._mb_iter is not None:
+            return next(self._mb_iter)
+        return self.X, self.Y
+    
+    def maximum_log_likelihood_objective(self):
+        Xb, Yb = self._get_batch()
+        L = tf.reduce_sum(self.E_log_p_Y(Xb, Yb))
         KL = tf.reduce_sum([layer.KL() for layer in self.layers])
-        scale = tf.cast(self.num_data, float_type)
-        scale /= tf.cast(tf.shape(self.X)[0], float_type)  # minibatch size
+        batch_size = tf.cast(tf.shape(Xb)[0], default_float())
+        scale = tf.cast(self.num_data, default_float()) / batch_size
         return L * scale - KL
 
-    @autoflow((float_type, [None, None]), (tf.int32, []))
     def predict_f(self, Xnew, num_samples):
         return self._build_predict(Xnew, full_cov=False, S=num_samples)
 
-    @autoflow((float_type, [None, None]), (tf.int32, []))
     def predict_f_full_cov(self, Xnew, num_samples):
         return self._build_predict(Xnew, full_cov=True, S=num_samples)
 
-    @autoflow((float_type, [None, None]), (tf.int32, []))
     def predict_all_layers(self, Xnew, num_samples):
         return self.propagate(Xnew, full_cov=False, S=num_samples)
 
-    @autoflow((float_type, [None, None]), (tf.int32, []))
     def predict_all_layers_full_cov(self, Xnew, num_samples):
         return self.propagate(Xnew, full_cov=True, S=num_samples)
 
-    @autoflow((float_type, [None, None]), (tf.int32, []))
     def predict_y(self, Xnew, num_samples):
         Fmean, Fvar = self._build_predict(Xnew, full_cov=False, S=num_samples)
         return self.likelihood.predict_mean_and_var(Fmean, Fvar)
 
-    @autoflow((float_type, [None, None]), (float_type, [None, None]), (tf.int32, []))
     def predict_density(self, Xnew, Ynew, num_samples):
         Fmean, Fvar = self._build_predict(Xnew, full_cov=False, S=num_samples)
         l = self.likelihood.predict_density(Fmean, Fvar, Ynew)
-        log_num_samples = tf.log(tf.cast(num_samples, float_type))
-        return tf.reduce_logsumexp(l - log_num_samples, axis=0)
+        log_num_samples = tf.math.log(tf.cast(num_samples, default_float()))
+        return tf.math.reduce_logsumexp(l - log_num_samples, axis=0)
 
 
 class DGP_Quad(DGP_Base):
@@ -154,7 +158,7 @@ class DGP_Quad(DGP_Base):
             s += layer.q_mu.shape[1]
 
         # finish with zeros (we don't need to do quadrature over the final layer and this will never get used
-        self.gh_x.append(tf.zeros((1, 1, 1), dtype=settings.float_type))
+        self.gh_x.append(tf.zeros((1, 1, 1), dtype=default_float()))
 
     def E_log_p_Y(self, X, Y):
         """
@@ -190,4 +194,3 @@ class DGP(DGP_Base):
                                     mean_function=mean_function,
                                     white=white)
         DGP_Base.__init__(self, X, Y, likelihood, layers, **kwargs)
-
