@@ -164,8 +164,8 @@ class SVGP_Layer(Layer):
         self.white = white
 
         if not self.white:  # initialize to prior
-            Ku = self.kern.K(Z)
-            Lu = np.linalg.cholesky(Ku + np.eye(Z.shape[0])*default_jitter())
+            Ku = self.kern.K(Z).numpy()
+            Lu = np.linalg.cholesky(Ku + np.eye(Z.shape[0]) * default_jitter())
             self.q_sqrt.assign(np.tile(Lu[None, :, :], [num_outputs, 1, 1]))
 
         self.needs_build_cholesky = True
@@ -280,7 +280,7 @@ class GPMC_Layer(Layer):
 
         self.num_outputs = num_outputs
 
-        Ku = self.kern.K(X) + np.eye(self.num_data) * default_jitter()
+        Ku = self.kern.K(X).numpy() + np.eye(self.num_data) * default_jitter()
         self.Lu = tf.constant(np.linalg.cholesky(Ku))
         self.X = tf.constant(X)
 
