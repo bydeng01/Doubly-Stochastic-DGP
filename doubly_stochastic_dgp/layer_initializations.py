@@ -75,14 +75,14 @@ def init_layers_input_prop(X, Y, Z, kernels,
     for kern_in, kern_out in zip(kernels[:-1], kernels[1:]):
         dim_in = _kernel_input_dim(kern_in, D)
         dim_out = _kernel_input_dim(kern_out, D) - D
-        std_in = kern_in.variance**0.5
-        pad = np.random.randn(M, dim_in - D) * 2. * std_in
+        std_in = float(np.sqrt(kern_in.variance.numpy()))
+        pad = np.random.randn(M, dim_in - D) * 2.0 * std_in
         Z_padded = np.concatenate([Z, pad], 1)
         layers.append(Layer(kern_in, Z_padded, dim_out, Zero(), white=white, input_prop_dim=D))
 
     dim_in = _kernel_input_dim(kernels[-1], D)
     std_in = kernels[-2].variance**0.5 if dim_in > D else 1.
-    pad = np.random.randn(M, dim_in - D) * 2. * std_in
+    pad = np.random.randn(M, dim_in - D) * 2.0 * std_in
     Z_padded = np.concatenate([Z, pad], 1)
     layers.append(Layer(kernels[-1], Z_padded, num_outputs, mean_function, white=white))
     return layers
