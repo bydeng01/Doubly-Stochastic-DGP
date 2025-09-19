@@ -2,6 +2,9 @@
 
 This repository is a fork of the original codebase, updated by [Boyuan Deng](https://bydeng01.github.io/) to be compatible with GPflow 2.x and TensorFlow 2. The updated version will be used to provide support for [Emukit](https://github.com/bydeng01/emukit).
 
+If you use this code, please cite the original paper listed in the **Citation** section.
+To support my work, consider giving the repository a ⭐ on GitHub.
+
 ## Installation
 
 ```bash
