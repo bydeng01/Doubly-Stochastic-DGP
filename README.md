@@ -32,5 +32,3 @@ This code now offers additional functionality than in the above paper. In partic
   year={2018}
 }
 ```
-
-**Disclaimer:** This is a fork of the original codebase, updated to work with GPflow 2.x and TensorFlow 2 by [Boyuan Deng](https://bydeng01.github.io/).
