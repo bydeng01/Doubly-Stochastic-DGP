@@ -1,5 +1,12 @@
-# Doubly-Stochastic-DGP
-Deep Gaussian Processes with Doubly Stochastic Variational Inference 
+# Deep Gaussian Processes with Doubly Stochastic Variational Inference
+
+This repository is a fork of the original codebase, updated by [Boyuan Deng](https://bydeng01.github.io/) to be compatible with GPflow 2.x and TensorFlow 2. The updated version will be used to provide support for [Emukit](https://github.com/bydeng01/emukit).
+
+## Installation
+
+```bash
+python -m pip install -U git+https://github.com/bydeng01/Doubly-Stochastic-DGP.git
+```
 
 ## Citation
 This code accompanies the paper https://arxiv.org/abs/1705.08933
