@@ -1,3 +1,5 @@
+# Copyright 2025 Boyuan Deng
+#
 # Copyright 2017 Hugh Salimbeni
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +33,7 @@ class Dataset(object):
         self.type = type
 
     def csv_file_path(self, name):
-        return '{}{}.csv'.format(self.data_path, name)
+        return os.path.join(self.data_path, '{}.csv'.format(name))
 
     def read_data(self):
         data = pandas.read_csv(self.csv_file_path(self.name),
@@ -50,7 +52,7 @@ class Dataset(object):
         split_data = self.split(full_data, seed, split, prop)
         split_data = self.normalize(split_data, 'X')
 
-        if self.type is 'regression':
+        if self.type == 'regression':
             split_data = self.normalize(split_data, 'Y')
 
         return split_data
@@ -108,7 +110,7 @@ class Concrete(Dataset):
     def download_data(self):
         url = '{}{}'.format(uci_base, 'concrete/compressive/Concrete_Data.xls')
 
-        data = pandas.read_excel(url).values
+        data = pandas.read_excel(url, engine='xlrd').values
         with open(self.csv_file_path(self.name), 'w') as f:
             csv.writer(f).writerows(data)
 
@@ -121,7 +123,7 @@ class Energy(Dataset):
     def download_data(self):
         url = '{}{}'.format(uci_base, '00242/ENB2012_data.xlsx')
 
-        data = pandas.read_excel(url).values
+        data = pandas.read_excel(url, engine='openpyxl').values
         data = data[:, :-1]
 
         with open(self.csv_file_path(self.name), 'w') as f:
@@ -134,10 +136,23 @@ class Kin8mn(Dataset):
         self.type = 'regression'
 
     def download_data(self):
+        try:
+            import openml
+        except ImportError as e:
+            raise RuntimeError(
+                "The 'openml' package is required to download the Kin8nm dataset. "
+                "Install it with 'pip install openml' or provide the CSV manually at {}".format(
+                    self.csv_file_path(self.name)
+                )
+            ) from e
 
-        url = 'http://mldata.org/repository/data/download/csv/uci-20070111-kin8nm'
+        dataset = openml.datasets.get_dataset(189)  # Kin8nm
+        X, y, _, _ = dataset.get_data(target=dataset.default_target_attribute)
 
-        data = pandas.read_csv(url, header=None).values
+        # Ensure numpy arrays
+        X_values = X.values if hasattr(X, 'values') else np.asarray(X)
+        y_values = y.values if hasattr(y, 'values') else np.asarray(y)
+        data = np.concatenate([X_values, y_values[:, None]], 1)
 
         with open(self.csv_file_path(self.name), 'w') as f:
             csv.writer(f).writerows(data)
@@ -174,7 +189,7 @@ class Power(Dataset):
             with ZipFile(BytesIO(zipresp.read())) as zfile:
                 zfile.extractall('/tmp/')
 
-        data = pandas.read_excel('/tmp/CCPP//Folds5x2_pp.xlsx').values
+        data = pandas.read_excel('/tmp/CCPP//Folds5x2_pp.xlsx', engine='openpyxl').values
 
         with open(self.csv_file_path(self.name), 'w') as f:
             csv.writer(f).writerows(data)
@@ -229,8 +244,13 @@ class WineWhite(Dataset):
 
 class Datasets(object):
     def __init__(self, data_path='/data/'):
-        if not os.path.isdir(data_path):
-            os.mkdir(data_path)
+        data_path = os.path.expanduser(data_path)
+        try:
+            os.makedirs(data_path, exist_ok=True)
+        except PermissionError:
+            # Fallback to a local directory if the default is not writable
+            data_path = os.path.join(os.getcwd(), 'data')
+            os.makedirs(data_path, exist_ok=True)
 
         datasets = []
 
