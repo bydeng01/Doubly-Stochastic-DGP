@@ -24,7 +24,8 @@ from gpflow.covariances import Kuu, Kuf
 from gpflow.kullback_leiblers import gauss_kl
 
 import tensorflow_probability as tfp
-from gpflow import default_float, to_default_float
+from gpflow import default_float
+from gpflow.utilities import to_default_float
 
 from gpflow import default_float
 from gpflow.config import default_jitter
