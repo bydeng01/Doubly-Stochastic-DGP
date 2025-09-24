@@ -20,6 +20,7 @@ import numpy as np
 from gpflow.base import Module, Parameter
 from gpflow.conditionals import conditional
 from gpflow.inducing_variables import InducingPoints
+from gpflow.covariances import Kuu, Kuf
 from gpflow.kullback_leiblers import gauss_kl
 # NOTE: gpflow>=2.9 removes the top-level `gpflow.priors` package; keep compatibility.
 try:
@@ -179,7 +180,7 @@ class SVGP_Layer(Layer):
     def build_cholesky_if_needed(self):
         # make sure we only compute this once
         if self.needs_build_cholesky:
-            self.Ku = self.feature.Kuu(self.kern, jitter=default_jitter())
+            self.Ku = Kuu(self.feature, self.kern, jitter=default_jitter())
             self.Lu = tf.linalg.cholesky(self.Ku)
             self.Ku_tiled = tf.tile(self.Ku[None, :, :], [self.num_outputs, 1, 1])
             self.Lu_tiled = tf.tile(self.Lu[None, :, :], [self.num_outputs, 1, 1])
@@ -192,9 +193,9 @@ class SVGP_Layer(Layer):
         # mmean, vvar = conditional(X, self.feature.Z, self.kern,
         #             self.q_mu, q_sqrt=self.q_sqrt,
         #             full_cov=full_cov, white=self.white)
-        Kuf = self.feature.Kuf(self.kern, X)
+        Kuf_ = Kuf(self.feature, self.kern, X)
 
-        A = tf.linalg.triangular_solve(self.Lu, Kuf, lower=True)
+        A = tf.linalg.triangular_solve(self.Lu, Kuf_, lower=True)
         if not self.white:
             A = tf.linalg.triangular_solve(tf.transpose(self.Lu), A, lower=False)
 
@@ -388,13 +389,13 @@ def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
 
         err = Y - self.mean_function(X_mean)
         Kdiag = self.kern.Kdiag(X_mean)
-        Kuf = self.feature.Kuf(self.kern, X_mean)
-        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
-        L = tf.linalg.cholesky(Kuu)
+        Kuf_ = Kuf(self.feature, self.kern, X_mean)
+        Kuu_ = Kuu(self.feature, self.kern, jitter=default_jitter())
+        L = tf.linalg.cholesky(Kuu_)
         sigma = tf.sqrt(variance)
 
         # Compute intermediate matrices
-        A = tf.linalg.triangular_solve(L, Kuf, lower=True) / sigma
+        A = tf.linalg.triangular_solve(L, Kuf_, lower=True) / sigma
         AAT = tf.matmul(A, A, transpose_b=True)
         B = AAT + tf.eye(num_inducing, dtype=default_float())
         LB = tf.linalg.cholesky(B)
@@ -426,8 +427,8 @@ def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
             psi0 = tf.reduce_sum(expectation(pX, self.kern))
             psi1 = expectation(pX, (self.kern, self.feature))
             psi2 = tf.reduce_sum(expectation(pX, (self.kern, self.feature), (self.kern, self.feature)), axis=0)
-        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
-        L = tf.linalg.cholesky(Kuu)
+        Kuu_ = Kuu(self.feature, self.kern, jitter=default_jitter())
+        L = tf.linalg.cholesky(Kuu_)
         sigma2 = variance
         sigma = tf.sqrt(sigma2)
 
@@ -466,12 +467,12 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
         # SGPR
         num_inducing = len(self.feature)
         err = Y - self.mean_function(X_mean)
-        Kuf = self.feature.Kuf(self.kern, X_mean)
-        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
-        Kus = self.feature.Kuf(self.kern, Xnew)
+        Kuf_train = Kuf(self.feature, self.kern, X_mean)
+        Kuu_ = Kuu(self.feature, self.kern, jitter=default_jitter())
+        Kus = Kuf(self.feature, self.kern, Xnew)
         sigma = tf.sqrt(variance)
-        L = tf.linalg.cholesky(Kuu)
-        A = tf.linalg.triangular_solve(L, Kuf, lower=True) / sigma
+        L = tf.linalg.cholesky(Kuu_)
+        A = tf.linalg.triangular_solve(L, Kuf_train, lower=True) / sigma
         B = tf.matmul(A, A, transpose_b=True) + tf.eye(num_inducing, dtype=default_float())
         LB = tf.linalg.cholesky(B)
         Aerr = tf.matmul(A, err)
@@ -508,11 +509,11 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
         # psi1 = expectation(pX, (self.kern, self.feature))
         # psi2 = tf.reduce_sum(expectation(pX, (self.kern, self.feature), (self.kern, self.feature)), axis=0)
 
-        Kuu = self.feature.Kuu(self.kern, jitter=default_jitter())
-        Kus = self.feature.Kuf(self.kern, Xnew)
+        Kuu_ = Kuu(self.feature, self.kern, jitter=default_jitter())
+        Kus = Kuf(self.feature, self.kern, Xnew)
         sigma2 = variance
         sigma = tf.sqrt(sigma2)
-        L = tf.linalg.cholesky(Kuu)
+        L = tf.linalg.cholesky(Kuu_)
 
         A = tf.linalg.triangular_solve(L, tf.transpose(psi1), lower=True) / sigma
         tmp = tf.linalg.triangular_solve(L, psi2, lower=True)
