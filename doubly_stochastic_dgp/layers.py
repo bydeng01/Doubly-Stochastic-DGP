@@ -23,11 +23,11 @@ from gpflow.inducing_variables import InducingPoints
 from gpflow.covariances import Kuu, Kuf
 from gpflow.kullback_leiblers import gauss_kl
 
-# try:
-#     from gpflow.priors import Gaussian as Gaussian_prior
-# except (ImportError, ModuleNotFoundError):
-#     from gpflow import priors as _priors
-#     Gaussian_prior = _priors.Gaussian
+try:
+    from gpflow.priors import Gaussian as Gaussian_prior
+except (ImportError, ModuleNotFoundError):
+    from gpflow import priors as _priors
+    Gaussian_prior = _priors.Gaussian
 
 from gpflow import default_float
 from gpflow.config import default_jitter
@@ -264,7 +264,7 @@ class SGPMC_Layer(SVGP_Layer):
         A sparse layer for sampling over the inducing point values 
         """
         SVGP_Layer.__init__(self, *args, **kwargs)
-        # self.q_mu.prior = Gaussian_prior(0., 1.)
+        self.q_mu.prior = Gaussian_prior(0., 1.)
         del self.q_sqrt
         self.q_sqrt = None
 
@@ -281,7 +281,7 @@ class GPMC_Layer(Layer):
         self.num_data = X.shape[0]
         q_mu = np.zeros((self.num_data, num_outputs))
         self.q_mu = Parameter(q_mu)
-        # self.q_mu.prior = Gaussian_prior(0., 1.)
+        self.q_mu.prior = Gaussian_prior(0., 1.)
         self.kern = kern
         self.mean_function = mean_function
 
