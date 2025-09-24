@@ -22,13 +22,13 @@ from gpflow.conditionals import conditional
 from gpflow.inducing_variables import InducingPoints
 from gpflow.covariances import Kuu, Kuf
 from gpflow.kullback_leiblers import gauss_kl
-# NOTE: gpflow>=2.9 removes the top-level `gpflow.priors` package; keep compatibility.
+
 try:
     from gpflow.priors import Gaussian as Gaussian_prior
 except (ImportError, ModuleNotFoundError):
-    from gpflow import priors as _priors  # type: ignore
-
+    from gpflow import priors as _priors
     Gaussian_prior = _priors.Gaussian
+
 from gpflow import default_float
 from gpflow.config import default_jitter
 from gpflow.expectations import expectation
