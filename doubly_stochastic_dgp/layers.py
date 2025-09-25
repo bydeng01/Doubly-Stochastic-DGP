@@ -181,16 +181,16 @@ class SVGP_Layer(Layer):
         return Ku, Lu, Ku_tiled, Lu_tiled
 
     def conditional_ND(self, X, full_cov=False):
-        self.build_cholesky_if_needed()
+        Ku, Lu, Ku_tiled, Lu_tiled = self._ku_lu()
 
         # mmean, vvar = conditional(X, self.feature.Z, self.kern,
         #             self.q_mu, q_sqrt=self.q_sqrt,
         #             full_cov=full_cov, white=self.white)
         Kuf_ = Kuf(self.feature, self.kern, X)
 
-        A = tf.linalg.triangular_solve(self.Lu, Kuf_, lower=True)
+        A = tf.linalg.triangular_solve(Lu, Kuf_, lower=True)
         if not self.white:
-            A = tf.linalg.triangular_solve(tf.transpose(self.Lu), A, lower=False)
+            A = tf.linalg.triangular_solve(tf.transpose(Lu), A, lower=False)
 
         mean = tf.matmul(A, self.q_mu, transpose_a=True)
 
@@ -200,7 +200,7 @@ class SVGP_Layer(Layer):
         if self.white:
             SK = -I
         else:
-            SK = -self.Ku_tiled
+            SK = -Ku_tiled
 
         if self.q_sqrt is not None:
             SK += tf.matmul(self.q_sqrt, self.q_sqrt, transpose_b=True)
