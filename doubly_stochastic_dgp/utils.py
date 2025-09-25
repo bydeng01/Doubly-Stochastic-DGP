@@ -87,11 +87,12 @@ class BroadcastingLikelihood(Module):
             else:
                 return tf.reshape(flattened_result, [S, N, -1])
 
-    def variational_expectations(self, Fmu, Fvar, Y):
-        f = lambda vars_SND, vars_ND: self.likelihood.variational_expectations(vars_SND[0],
-                                                                                vars_SND[1],
-                                                                                vars_ND[0])
-        return self._broadcast(f,[Fmu, Fvar], [Y])
+    def variational_expectations(self, X, Fmu, Fvar, Y):
+        f = lambda vars_SND, vars_ND: self.likelihood.variational_expectations(vars_ND[0], # X 
+                                                                                vars_SND[0], # Fmu
+                                                                                vars_SND[1], # Fvar
+                                                                                vars_ND[1]) # Y
+        return self._broadcast(f,[Fmu, Fvar], [X, Y])
 
     def logp(self, F, Y):
         f = lambda vars_SND, vars_ND: self.likelihood.log_prob(vars_SND[0], vars_ND[0])
