@@ -173,15 +173,12 @@ class SVGP_Layer(Layer):
             Lu = np.linalg.cholesky(Ku + np.eye(Z.shape[0]) * default_jitter())
             self.q_sqrt.assign(np.tile(Lu[None, :, :], [num_outputs, 1, 1]))
 
-    def build_cholesky_if_needed(self):
-        # make sure we only compute this once
-        if self.needs_build_cholesky:
-            self.Ku = Kuu(self.feature, self.kern, jitter=default_jitter())
-            self.Lu = tf.linalg.cholesky(self.Ku)
-            self.Ku_tiled = tf.tile(self.Ku[None, :, :], [self.num_outputs, 1, 1])
-            self.Lu_tiled = tf.tile(self.Lu[None, :, :], [self.num_outputs, 1, 1])
-            self.needs_build_cholesky = False
-
+    def _ku_lu(self):
+        Ku = Kuu(self.feature, self.kern, jitter=default_jitter())
+        Lu = tf.linalg.cholesky(Ku)
+        Ku_tiled = tf.tile(Ku[None, :, :], [self.num_outputs, 1, 1])
+        Lu_tiled = tf.tile(Lu[None, :, :], [self.num_outputs, 1, 1])
+        return Ku, Lu, Ku_tiled, Lu_tiled
 
     def conditional_ND(self, X, full_cov=False):
         self.build_cholesky_if_needed()
