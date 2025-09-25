@@ -72,7 +72,7 @@ class BroadcastingLikelihood(Module):
 
     def _broadcast(self, f, vars_SND, vars_ND):
         if self.needs_broadcasting is False:
-            return f(vars_SND, [tf.expand_dims(v, 0) for v in vars_ND])
+            return f(vars_SND, vars_ND)
 
         else:
             S, N, D = [tf.shape(vars_SND[0])[i] for i in range(3)]
