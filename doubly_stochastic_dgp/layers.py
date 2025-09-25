@@ -220,7 +220,7 @@ class SVGP_Layer(Layer):
         else:
             # (num_latent, num_X)
             delta_cov = tf.reduce_sum(A_tiled * B, 1)
-            Kff = self.kern.Kdiag(X)
+            Kff = self.kern.K_diag(X)
 
         # either (1, num_X) + (num_latent, num_X) or (1, num_X, num_X) + (num_latent, num_X, num_X)
         var = tf.expand_dims(Kff, 0) + delta_cov
@@ -346,7 +346,7 @@ class GPR_Layer(Collapsed_Layer):
             shape = tf.stack([1, 1, tf.shape(self._Y)[1]])
             fvar = tf.tile(tf.expand_dims(fvar, 2), shape)
         else:
-            fvar = self.kern.Kdiag(Xnew) - tf.reduce_sum(tf.square(A), 0)
+            fvar = self.kern.K_diag(Xnew) - tf.reduce_sum(tf.square(A), 0)
             fvar = tf.tile(tf.reshape(fvar, (-1, 1)), [1, tf.shape(self._Y)[1]])
         return fmean, fvar
 
@@ -392,7 +392,7 @@ def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
         output_dim = tf.cast(tf.shape(Y)[1], default_float())
 
         err = Y - self.mean_function(X_mean)
-        Kdiag = self.kern.Kdiag(X_mean)
+        Kdiag = self.kern.K_diag(X_mean)
         Kuf_ = Kuf(self.feature, self.kern, X_mean)
         Kuu_ = Kuu(self.feature, self.kern, jitter=default_jitter())
         L = tf.linalg.cholesky(Kuu_)
@@ -490,7 +490,7 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
             shape = tf.stack([1, 1, tf.shape(Y)[1]])
             var = tf.tile(tf.expand_dims(var, 2), shape)
         else:
-            var = self.kern.Kdiag(Xnew) + tf.reduce_sum(tf.square(tmp2), 0) \
+            var = self.kern.K_diag(Xnew) + tf.reduce_sum(tf.square(tmp2), 0) \
                   - tf.reduce_sum(tf.square(tmp1), 0)
             shape = tf.stack([1, tf.shape(Y)[1]])
             var = tf.tile(tf.expand_dims(var, 1), shape)
@@ -534,7 +534,7 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
             shape = tf.stack([1, 1, tf.shape(Y)[1]])
             var = tf.tile(tf.expand_dims(var, 2), shape)
         else:
-            var = self.kern.Kdiag(Xnew) + tf.reduce_sum(tf.square(tmp2), 0) \
+            var = self.kern.K_diag(Xnew) + tf.reduce_sum(tf.square(tmp2), 0) \
                   - tf.reduce_sum(tf.square(tmp1), 0)
             shape = tf.stack([1, tf.shape(Y)[1]])
             var = tf.tile(tf.expand_dims(var, 1), shape)
