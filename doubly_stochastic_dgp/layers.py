@@ -173,8 +173,6 @@ class SVGP_Layer(Layer):
             Lu = np.linalg.cholesky(Ku + np.eye(Z.shape[0]) * default_jitter())
             self.q_sqrt.assign(np.tile(Lu[None, :, :], [num_outputs, 1, 1]))
 
-        self.needs_build_cholesky = True
-
     def build_cholesky_if_needed(self):
         # make sure we only compute this once
         if self.needs_build_cholesky:
