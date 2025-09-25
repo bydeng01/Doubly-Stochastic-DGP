@@ -94,9 +94,13 @@ class BroadcastingLikelihood(Module):
                                                                                 vars_ND[1]) # Y
         return self._broadcast(f,[Fmu, Fvar], [X, Y])
 
-    def logp(self, F, Y):
-        f = lambda vars_SND, vars_ND: self.likelihood.log_prob(vars_SND[0], vars_ND[0])
-        return self._broadcast(f, [F], [Y])
+    def logp(self, X, F, Y):
+        f = lambda vars_SND, vars_ND: self.likelihood.log_prob(
+            vars_ND[0],  # X
+            vars_SND[0], # F
+            vars_ND[1],  # Y
+        )
+        return self._broadcast(f, [F], [X, Y])
 
     def conditional_mean(self, F):
          f = lambda vars_SND, vars_ND: self.likelihood.conditional_mean(vars_SND[0])
