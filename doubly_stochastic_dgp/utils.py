@@ -102,18 +102,24 @@ class BroadcastingLikelihood(Module):
         )
         return self._broadcast(f, [F], [X, Y])
 
-    def conditional_mean(self, F):
-         f = lambda vars_SND, vars_ND: self.likelihood.conditional_mean(vars_SND[0])
-         return self._broadcast(f,[F], [])
+    def conditional_mean(self, X, F):
+         f = lambda vars_SND, vars_ND: self.likelihood.conditional_mean(
+            vars_ND[0],  # X
+            vars_SND[0], # F
+         )
+         return self._broadcast(f, [F], [X])
 
     def conditional_variance(self, F):
          f = lambda vars_SND, vars_ND: self.likelihood.conditional_variance(vars_SND[0])
          return self._broadcast(f,[F], [])
 
-    def predict_mean_and_var(self, Fmu, Fvar):
-         f = lambda vars_SND, vars_ND: self.likelihood.predict_mean_and_var(vars_SND[0],
-                                                                             vars_SND[1])
-         return self._broadcast(f,[Fmu, Fvar], [])
+    def predict_mean_and_var(self, X, Fmu, Fvar):
+         f = lambda vars_SND, vars_ND: self.likelihood.predict_mean_and_var(
+            vars_ND[0],   # X
+            vars_SND[0],  # Fmu
+            vars_SND[1],  # Fvar
+            )
+         return self._broadcast(f, [Fmu, Fvar], [X])
 
     def predict_density(self, Fmu, Fvar, Y):
         f = lambda vars_SND, vars_ND: tf.exp(self.likelihood.predict_log_density(
