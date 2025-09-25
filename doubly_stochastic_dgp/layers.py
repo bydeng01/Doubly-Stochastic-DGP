@@ -233,16 +233,15 @@ class SVGP_Layer(Layer):
         #     return gauss_kl(self.q_mu, self.q_sqrt)
         # else:
         #     return gauss_kl(self.q_mu, self.q_sqrt, self.Ku)
-
-        self.build_cholesky_if_needed()
+        Ku, Lu, Ku_tiled, Lu_tiled = self._ku_lu()
 
         KL = -0.5 * self.num_outputs * self.num_inducing
         KL -= 0.5 * tf.reduce_sum(tf.math.log(tf.linalg.diag_part(self.q_sqrt) ** 2))
 
         if not self.white:
-            KL += tf.reduce_sum(tf.math.log(tf.linalg.diag_part(self.Lu))) * self.num_outputs
-            KL += 0.5 * tf.reduce_sum(tf.square(tf.linalg.triangular_solve(self.Lu_tiled, self.q_sqrt, lower=True)))
-            Kinv_m = tf.linalg.cholesky_solve(self.Lu, self.q_mu)
+            KL += tf.reduce_sum(tf.math.log(tf.linalg.diag_part(Lu))) * self.num_outputs
+            KL += 0.5 * tf.reduce_sum(tf.square(tf.linalg.triangular_solve(Lu_tiled, self.q_sqrt, lower=True)))
+            Kinv_m = tf.linalg.cholesky_solve(Lu, self.q_mu)
             KL += 0.5 * tf.reduce_sum(self.q_mu * Kinv_m)
         else:
             KL += 0.5 * tf.reduce_sum(tf.square(self.q_sqrt))
