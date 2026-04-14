@@ -25,6 +25,11 @@ from doubly_stochastic_dgp.layers import GPR_Layer, GPMC_Layer
 
 
 class DGP_Collapsed(DGP_Base):
+    def __init__(self, X, Y, likelihood, layers, **kwargs):
+        if kwargs.get("minibatch_size") is not None:
+            raise ValueError("DGP_Collapsed integrates the final layer over the full dataset and does not support minibatches.")
+        DGP_Base.__init__(self, X, Y, likelihood, layers, **kwargs)
+
     def inner_layers_propagate(self, X, full_cov=False, S=1, zs=None):
         sX = tf.tile(tf.expand_dims(X, 0), [S, 1, 1])
 
@@ -77,8 +82,6 @@ class DGP_Heinonen(DGP_Collapsed):
         assert isinstance(likelihood, Gaussian)
         assert isinstance(layers[0], GPMC_Layer)
         assert isinstance(layers[1], GPR_Layer)
-        if 'minibatch_size' in kwargs:
-            assert kwargs['minibatch_size'] is None
         DGP_Collapsed.__init__(self, X, Y, likelihood, layers, **kwargs)
 
     def inner_layers_propagate(self, X, full_cov=False, S=1, zs=None):

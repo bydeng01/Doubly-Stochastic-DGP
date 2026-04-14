@@ -54,7 +54,10 @@ class DGP_Base(Module):
         if minibatch_size is not None:
             ds = tf.data.Dataset.from_tensor_slices((X_full, Y_full))
             # buffer_size = dataset size; seeded shuffle like original Minibatch(...)
-            ds = ds.shuffle(buffer_size=tf.shape(X_full)[0], seed=0, reshuffle_each_iteration=True)
+            buffer_size = X_full.shape[0]
+            if buffer_size is None:
+                buffer_size = int(tf.shape(X_full)[0].numpy())
+            ds = ds.shuffle(buffer_size=int(buffer_size), seed=0, reshuffle_each_iteration=True)
             ds = ds.repeat().batch(minibatch_size, drop_remainder=False)
             self._mb_iter = iter(ds)
         else:
@@ -90,7 +93,7 @@ class DGP_Base(Module):
          with MC samples
         """
         Fmean, Fvar = self._build_predict(X, full_cov=False, S=self.num_samples)
-        var_exp = self.likelihood.variational_expectations(Fmean, Fvar, Y)  # S, N, D
+        var_exp = self.likelihood.variational_expectations(X, Fmean, Fvar, Y)  # S, N, D
         return tf.reduce_mean(var_exp, 0)  # N, D
 
     # helper to fetch current batch
@@ -107,6 +110,9 @@ class DGP_Base(Module):
         scale = tf.cast(self.num_data, default_float()) / batch_size
         return L * scale - KL
 
+    def training_loss(self):
+        return -self.maximum_log_likelihood_objective()
+
     def predict_f(self, Xnew, num_samples):
         return self._build_predict(Xnew, full_cov=False, S=num_samples)
 
@@ -121,13 +127,16 @@ class DGP_Base(Module):
 
     def predict_y(self, Xnew, num_samples):
         Fmean, Fvar = self._build_predict(Xnew, full_cov=False, S=num_samples)
-        return self.likelihood.predict_mean_and_var(Fmean, Fvar)
+        return self.likelihood.predict_mean_and_var(Xnew, Fmean, Fvar)
 
     def predict_density(self, Xnew, Ynew, num_samples):
         Fmean, Fvar = self._build_predict(Xnew, full_cov=False, S=num_samples)
-        l = self.likelihood.predict_density(Fmean, Fvar, Ynew)
+        l = self.likelihood.predict_log_density(Xnew, Fmean, Fvar, Ynew)
         log_num_samples = tf.math.log(tf.cast(num_samples, default_float()))
         return tf.math.reduce_logsumexp(l - log_num_samples, axis=0)
+
+    def predict_log_density(self, Xnew, Ynew, num_samples):
+        return self.predict_density(Xnew, Ynew, num_samples)
 
 
 class DGP_Quad(DGP_Base):
@@ -166,7 +175,7 @@ class DGP_Quad(DGP_Base):
          with quadrature 
         """
         _, Fmeans, Fvars = self.propagate(X, zs=self.gh_x, full_cov=False, S=self.H**self.D_quad)
-        var_exp = self.likelihood.variational_expectations(Fmeans[-1], Fvars[-1], Y)  # S, N, D
+        var_exp = self.likelihood.variational_expectations(X, Fmeans[-1], Fvars[-1], Y)  # S, N, D
         return tf.reduce_sum(var_exp * self.gh_w[:, None, None], 0)  # N, D
 
 

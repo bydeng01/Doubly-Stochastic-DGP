@@ -1,141 +1,91 @@
-import unittest
 import numpy as np
-
 from numpy.testing import assert_allclose
 
+import gpflow
+from gpflow.kernels import Matern52
+from gpflow.likelihoods import Gaussian
+from gpflow.mean_functions import Identity, Zero
+from gpflow.models import GPR
+from gpflow.optimizers import NaturalGradient
+
+from doubly_stochastic_dgp.dgp import DGP
 from doubly_stochastic_dgp.layers import GPMC_Layer, GPR_Layer
-
-from gpflow import settings as _settings
-from gpflow import session_manager as _session_manager
-
-custom_config = _settings.get_settings()
-custom_config.numerics.jitter_level = 1e-12
-
-with _settings.temp_settings(custom_config),\
-     _session_manager.get_session().as_default():
+from doubly_stochastic_dgp.model_zoo import DGP_Heinonen
 
 
-    from gpflow.models import SVGP, GPR
-    from gpflow.kernels import Matern52, RBF
-    from gpflow.likelihoods import Gaussian, Bernoulli, MultiClass
-    from gpflow.training import ScipyOptimizer
-    from gpflow.mean_functions import Zero, Identity, Linear, Constant
-    from gpflow.training import NatGradOptimizer
-
-    from gpflow import settings
-
-    from doubly_stochastic_dgp.model_zoo import DGP_Heinonen
-
-    from doubly_stochastic_dgp.dgp import DGP, DGP_Base, DGP_Quad
-    from doubly_stochastic_dgp.layer_initializations import init_layers_linear
-    np.random.seed(0)
+gpflow.config.set_default_float(np.float64)
+gpflow.config.set_default_jitter(1e-12)
 
 
-    class TestHeinonen(unittest.TestCase):
-        def setUp(self):
-            Ns, N, D_X, D_Y = 5, 6, 3, 2
+class TestHeinonen:
+    def setup_method(self):
+        rng = np.random.default_rng(0)
+        self.N, self.D_X, self.D_Y = 6, 3, 1
+        self.X = rng.uniform(size=(self.N, self.D_X))
+        self.Xs = self.X.copy()
+        self.Y = rng.normal(size=(self.N, self.D_Y))
+        self.Ys = rng.normal(size=(self.N, self.D_Y))
 
-            self.X = np.random.uniform(size=(N, D_X))
-            self.Xs = self.X #np.random.uniform(size=(Ns, D_X))
+    def test_matches_single_layer_gpr_when_inner_layer_is_identity(self):
+        lik_var = 0.01
+        kernel = Matern52(lengthscales=0.5)
+        mean_function = Zero()
 
-            self.D_Y = D_Y
+        exact = GPR(data=(self.X, self.Y), kernel=kernel, mean_function=mean_function)
+        exact.likelihood.variance.assign(lik_var)
 
-        def test_vs_single_layer(self):
-            lik = Gaussian()
-            lik_var = 0.01
-            lik.variance = lik_var
-            N, Ns, D_Y, D_X = self.X.shape[0], self.Xs.shape[0], self.D_Y, self.X.shape[1]
-            Y = np.random.randn(N, D_Y)
-            Ys = np.random.randn(Ns, D_Y)
+        likelihood = Gaussian()
+        likelihood.variance.assign(lik_var)
+        layer0 = GPMC_Layer(Matern52(lengthscales=0.5, variance=1e-1), self.X.copy(), self.D_X, Identity())
+        layer1 = GPR_Layer(Matern52(lengthscales=0.5), mean_function, self.D_Y)
+        model = DGP_Heinonen(self.X, self.Y, likelihood, [layer0, layer1])
 
-            kern = Matern52(self.X.shape[1], lengthscales=0.5)
-            # mf = Linear(A=np.random.randn(D_X, D_Y), b=np.random.randn(D_Y))
-            mf = Zero()
-            m_gpr = GPR(self.X, Y, kern, mean_function=mf)
-            m_gpr.likelihood.variance = lik_var
-            mean_gpr, var_gpr = m_gpr.predict_y(self.Xs)
-            test_lik_gpr = m_gpr.predict_density(self.Xs, Ys)
-            pred_m_gpr, pred_v_gpr = m_gpr.predict_f(self.Xs)
-            pred_mfull_gpr, pred_vfull_gpr = m_gpr.predict_f_full_cov(self.Xs)
+        mean_model, var_model = model.predict_y(self.Xs, 1)
+        mean_exact, var_exact = exact.predict_y(self.Xs)
+        assert_allclose(mean_model[0].numpy(), mean_exact.numpy(), atol=1e-4, rtol=1e-4)
+        assert_allclose(var_model[0].numpy(), var_exact.numpy(), atol=1e-4, rtol=1e-4)
 
-            kerns = []
-            kerns.append(Matern52(self.X.shape[1], lengthscales=0.5, variance=1e-1))
-            kerns.append(kern)
+        logp_model = model.predict_density(self.Xs, self.Ys, 1)
+        logp_exact = exact.predict_log_density((self.Xs, self.Ys))
+        assert_allclose(logp_model.numpy(), logp_exact.numpy(), atol=1e-4, rtol=1e-4)
 
-            layer0 = GPMC_Layer(kerns[0], self.X.copy(), D_X, Identity())
-            layer1 = GPR_Layer(kerns[1], mf, D_Y)
-            m_dgp = DGP_Heinonen(self.X, Y, lik, [layer0, layer1])
+    def test_matches_dgp_after_natgrad_update(self):
+        rng = np.random.default_rng(1)
+        lik_var = 0.1
+        q_mu = rng.normal(size=(self.N, self.D_X))
+        mean_function = Zero()
 
+        likelihood_dgp = Gaussian()
+        likelihood_dgp.variance.assign(lik_var)
+        kernels = [Matern52(lengthscales=0.5), Matern52(lengthscales=0.5)]
+        dgp = DGP(self.X, self.Y, self.X, kernels, likelihood_dgp, mean_function=mean_function, white=True)
+        dgp.layers[0].q_mu.assign(q_mu)
+        dgp.layers[0].q_sqrt.assign(dgp.layers[0].q_sqrt * 1e-24)
 
-            mean_dgp, var_dgp = m_dgp.predict_y(self.Xs, 1)
-            test_lik_dgp = m_dgp.predict_density(self.Xs, Ys, 1)
-            pred_m_dgp, pred_v_dgp = m_dgp.predict_f(self.Xs, 1)
-            pred_mfull_dgp, pred_vfull_dgp = m_dgp.predict_f_full_cov(self.Xs, 1)
+        _, means, _ = dgp.predict_all_layers(self.Xs, 1)
+        Z = self.X.copy()
+        Z[: len(self.Xs)] = means[0][0].numpy()
+        dgp.layers[1].feature.Z.assign(Z)
 
-            tol = 1e-4
-            assert_allclose(mean_dgp[0], mean_gpr, atol=tol, rtol=tol)
-            assert_allclose(test_lik_dgp, test_lik_gpr, atol=tol, rtol=tol)
-            assert_allclose(pred_m_dgp[0], pred_m_gpr, atol=tol, rtol=tol)
-            assert_allclose(pred_mfull_dgp[0], pred_mfull_gpr, atol=tol, rtol=tol)
-            assert_allclose(pred_vfull_dgp[0], pred_vfull_gpr, atol=tol, rtol=tol)
+        NaturalGradient(gamma=1.0).minimize(
+            dgp.training_loss,
+            var_list=[(dgp.layers[1].q_mu, dgp.layers[1].q_sqrt)],
+        )
 
-        def test_vs_DGP2(self):
-            lik = Gaussian()
-            lik_var = 0.1
-            lik.variance = lik_var
-            N, Ns, D_Y, D_X = self.X.shape[0], self.Xs.shape[0], self.D_Y, self.X.shape[1]
+        likelihood_heinonen = Gaussian()
+        likelihood_heinonen.variance.assign(lik_var)
+        heinonen = DGP_Heinonen(
+            self.X,
+            self.Y,
+            likelihood_heinonen,
+            [
+                GPMC_Layer(Matern52(lengthscales=0.5), self.X.copy(), self.D_X, Identity()),
+                GPR_Layer(Matern52(lengthscales=0.5), mean_function, self.D_Y),
+            ],
+        )
+        heinonen.layers[0].q_mu.assign(q_mu)
 
-            q_mu = np.random.randn(N, D_X)
-
-            Y = np.random.randn(N, D_Y)
-            Ys = np.random.randn(Ns, D_Y)
-
-            kern1 = Matern52(self.X.shape[1], lengthscales=0.5)
-            kern2 = Matern52(self.X.shape[1], lengthscales=0.5)
-            kerns = [kern1, kern2]
-            # mf = Linear(A=np.random.randn(D_X, D_Y), b=np.random.randn(D_Y))
-
-            mf = Zero()
-            m_dgp = DGP(self.X, Y, self.X, kerns, lik, mean_function=mf, white=True)
-            m_dgp.layers[0].q_mu = q_mu
-            m_dgp.layers[0].q_sqrt = m_dgp.layers[0].q_sqrt.read_value() * 1e-24
-
-            Fs, ms, vs = m_dgp.predict_all_layers(self.Xs, 1)
-            Z = self.X.copy()
-            Z[:len(self.Xs)] = ms[0][0]
-            m_dgp.layers[1].feature.Z = Z  # need to put the inducing points in the right place
-
-            var_list = [[m_dgp.layers[1].q_mu, m_dgp.layers[1].q_sqrt]]
-            NatGradOptimizer(gamma=1).minimize(m_dgp, var_list=var_list, maxiter=1)
-
-            mean_dgp, var_dgp = m_dgp.predict_y(self.Xs, 1)
-            test_lik_dgp = m_dgp.predict_density(self.Xs, Ys, 1)
-            pred_m_dgp, pred_v_gpr = m_dgp.predict_f(self.Xs, 1)
-            pred_mfull_dgp, pred_vfull_dgp = m_dgp.predict_f_full_cov(self.Xs, 1)
-
-            # mean_functions = [Identity(), mf]
-            layer0 = GPMC_Layer(kerns[0], self.X.copy(), D_X, Identity())
-            layer1 = GPR_Layer(kerns[1], mf, D_Y)
-
-            m_heinonen = DGP_Heinonen(self.X, Y, lik, [layer0, layer1])
-
-            m_heinonen.layers[0].q_mu = q_mu
-
-            mean_heinonen, var_heinonen = m_heinonen.predict_y(self.Xs, 1)
-            test_lik_heinonen = m_heinonen.predict_density(self.Xs, Ys, 1)
-            pred_m_heinonen, pred_v_heinonen = m_heinonen.predict_f(self.Xs, 1)
-            pred_mfull_heinonen, pred_vfull_heinonen = m_heinonen.predict_f_full_cov(self.Xs, 1)
-
-            tol = 1e-4
-            assert_allclose(mean_dgp, mean_heinonen, atol=tol, rtol=tol)
-            assert_allclose(test_lik_dgp, test_lik_heinonen, atol=tol, rtol=tol)
-            assert_allclose(pred_m_dgp, pred_m_heinonen, atol=tol, rtol=tol)
-            assert_allclose(pred_mfull_dgp, pred_mfull_heinonen, atol=tol, rtol=tol)
-            assert_allclose(pred_vfull_dgp, pred_vfull_heinonen, atol=tol, rtol=tol)
-
-
-
-
-
-    if __name__ == '__main__':
-        unittest.main()
+        mean_dgp, var_dgp = dgp.predict_y(self.Xs, 1)
+        mean_heinonen, var_heinonen = heinonen.predict_y(self.Xs, 1)
+        assert_allclose(mean_dgp.numpy(), mean_heinonen.numpy(), atol=1e-4, rtol=1e-4)
+        assert_allclose(var_dgp.numpy(), var_heinonen.numpy(), atol=1e-4, rtol=1e-4)

@@ -139,7 +139,7 @@ class SVGP_Layer(Layer):
         variational parameters, inducing points and mean function.
 
         The underlying model at inputs X is
-        f = Lv + mean_function(X), where v \sim N(0, I) and LL^T = kern.K(X)
+        f = Lv + mean_function(X), where v \\sim N(0, I) and LL^T = kern.K(X)
 
         The variational distribution over the inducing points is
         q(v) = N(q_mu, q_sqrt q_sqrt^T)
@@ -381,7 +381,7 @@ class SGPR_Layer(Collapsed_Layer):
 def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
     if X_var is None:
         # SGPR
-        num_inducing = len(self.feature)
+        num_inducing = self.feature.num_inducing
         num_data = tf.cast(tf.shape(Y)[0], default_float())
         output_dim = tf.cast(tf.shape(Y)[1], default_float())
 
@@ -416,7 +416,7 @@ def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
 
         X_cov = tf.linalg.diag(X_var)
         pX = DiagonalGaussian(X_mean, X_var)
-        num_inducing = len(self.feature)
+        num_inducing = self.feature.num_inducing
         if hasattr(self.kern, 'X_input_dim'):
             psi0 = tf.reduce_sum(self.kern.eKdiag(X_mean, X_cov))
             psi1 = self.kern.eKxz(self.feature.Z, X_mean, X_cov)
@@ -463,7 +463,7 @@ def gplvm_build_likelihood(self, X_mean, X_var, Y, variance):
 def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
     if X_var is None:
         # SGPR
-        num_inducing = len(self.feature)
+        num_inducing = self.feature.num_inducing
         err = Y - self.mean_function(X_mean)
         Kuf_train = Kuf(self.feature, self.kern, X_mean)
         Kuu_ = Kuu(self.feature, self.kern, jitter=default_jitter())
@@ -493,7 +493,7 @@ def gplvm_build_predict(self, Xnew, X_mean, X_var, Y, variance, full_cov=False):
     else:
         # gplvm
         pX = DiagonalGaussian(X_mean, X_var)
-        num_inducing = len(self.feature)
+        num_inducing = self.feature.num_inducing
 
         X_cov = tf.linalg.diag(X_var)
 

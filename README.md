@@ -11,6 +11,19 @@ To support my work, consider giving the repository a ⭐ on GitHub.
 python -m pip install -U git+https://github.com/bydeng01/Doubly-Stochastic-DGP.git
 ```
 
+This version targets Python 3.9-3.12 with GPflow 2.10, TensorFlow 2.16, and TensorFlow Probability 0.24.
+For dataset download helpers, install the optional dataset extra:
+
+```bash
+python -m pip install -U "git+https://github.com/bydeng01/Doubly-Stochastic-DGP.git#egg=Doubly-Stochastic-DGP[datasets]"
+```
+
+For demo notebooks and scripts, install the demo extra:
+
+```bash
+python -m pip install -U "git+https://github.com/bydeng01/Doubly-Stochastic-DGP.git#egg=Doubly-Stochastic-DGP[demos]"
+```
+
 ## Citation
 This code accompanies the paper https://arxiv.org/abs/1705.08933
 ```bibtex

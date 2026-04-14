@@ -124,11 +124,15 @@ class BroadcastingLikelihood(Module):
             )
          return self._broadcast(f, [Fmu, Fvar], [X])
 
-    def predict_density(self, X, Fmu, Fvar, Y):
-        f = lambda vars_SND, vars_ND: tf.exp(self.likelihood.predict_log_density(
+    def predict_log_density(self, X, Fmu, Fvar, Y):
+        f = lambda vars_SND, vars_ND: self.likelihood.predict_log_density(
             vars_ND[0],   # X
             vars_SND[0],  # Fmu
             vars_SND[1],  # Fvar
             vars_ND[1],   # Y
-        ))
+        )
         return self._broadcast(f, [Fmu, Fvar], [X, Y])
+
+    def predict_density(self, X, Fmu, Fvar, Y):
+        """Legacy alias returning log densities for DGP predictive aggregation."""
+        return self.predict_log_density(X, Fmu, Fvar, Y)
